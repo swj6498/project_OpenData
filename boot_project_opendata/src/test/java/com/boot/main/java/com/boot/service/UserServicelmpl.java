@@ -1,0 +1,228 @@
+package com.boot.service;
+
+import java.util.Map;
+import java.util.HashMap;
+import java.util.List;
+
+import org.mybatis.spring.SqlSessionTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.boot.dao.FavoriteStationDAO;
+import com.boot.dao.UserDAO;
+import com.boot.dto.FavoriteStationDTO;
+import com.boot.dto.UserDTO;
+
+@Service
+public class UserServicelmpl implements UserService {
+
+	@Autowired
+	private SqlSessionTemplate sqlSession;
+	@Autowired
+    private UserDAO userDAO;
+	@Autowired
+	private PasswordEncoder passwordEncoder;
+
+	/** 로그인 검증: users.user_pw를 읽어와 비교 (현 상태 유지) */
+	@Override
+	public boolean loginYn(Map<String, String> param) {
+	    String dbPw = sqlSession.selectOne("com.boot.dao.UserDAO.loginYn", param);
+	    if (dbPw == null) 
+	    	return false;
+
+	    String inputPw = param.get("user_pw");
+
+	    // 암호화된 비밀번호 매칭
+	    return passwordEncoder.matches(inputPw, dbPw);
+	}
+
+	/** 마이페이지 조회 */
+	public Map<String, Object> getUser(String userId) {
+		Map<String, Object> m = new HashMap<String, Object>();
+		m.put("user_id", userId);
+		return sqlSession.selectOne("com.boot.dao.UserDAO.selectUser", m);
+	}
+
+	/** 마이페이지 수정 - 비밀번호 NULL 처리 추가 */
+	public int updateUser(Map<String, String> param) {
+	    // ✅ 비밀번호가 비어있거나 NULL인 경우 기존 비밀번호 유지
+	    String userPw = param.get("user_pw");
+	    
+	    if (userPw == null || userPw.trim().isEmpty()) {
+	        // 기존 사용자 정보 조회
+	        String userId = param.get("user_id");
+	        Map<String, Object> existingUser = getUser(userId);
+	        
+	        if (existingUser != null && existingUser.get("user_pw") != null) {
+	            // 기존 비밀번호를 param에 설정
+	            param.put("user_pw", (String) existingUser.get("user_pw"));
+	        }
+	    }
+	    
+	    return sqlSession.update("com.boot.dao.UserDAO.updateUser", param);
+	}
+
+
+	/** 회원가입 로직 + 약관 동의 저장 */
+	@Override
+	@Transactional
+	public int register(Map<String, String> param) {
+	    String rawPw = param.get("user_pw");          // 입력된 비번
+	    String encodedPw = passwordEncoder.encode(rawPw);  // 암호화
+	    param.put("user_pw", encodedPw);              // 암호화된 비번 저장
+	    
+	    int result = sqlSession.insert("com.boot.dao.UserDAO.register", param);
+
+	    // 회원 insert 성공 시 약관 동의 내역 저장
+	    if (result == 1) {
+	        String userId = param.get("user_id");
+	        String termsVersion = param.getOrDefault("terms_version", "1.0");
+
+	        Map<String, Object> termsParam = new HashMap<>();
+	        termsParam.put("user_id", userId);
+	        termsParam.put("terms_version", termsVersion);
+
+	        if ("Y".equals(param.get("terms_required_service"))) {
+	            termsParam.put("terms_type", "REQUIRED_SERVICE");
+	            termsParam.put("agreed", "Y");
+	            sqlSession.insert("com.boot.dao.UserDAO.insertUserTermsAgreement", termsParam);
+	        }
+	        if ("Y".equals(param.get("terms_required_privacy"))) {
+	            termsParam.put("terms_type", "REQUIRED_PRIVACY");
+	            termsParam.put("agreed", "Y");
+	            sqlSession.insert("com.boot.dao.UserDAO.insertUserTermsAgreement", termsParam);
+	        }
+	        if ("Y".equals(param.get("terms_optional_marketing"))) {
+	            termsParam.put("terms_type", "OPTIONAL_MARKETING");
+	            termsParam.put("agreed", "Y");
+	            sqlSession.insert("com.boot.dao.UserDAO.insertUserTermsAgreement", termsParam);
+	        }
+	    }
+
+	    return result;
+	}
+
+	@Override
+	@Transactional
+	public int withdraw(Map<String, String> param) {
+	    String userId = param.get("user_id");
+	    String inputPw = param.get("user_pw");
+
+	    // 1) DB 비밀번호 조회
+	    String dbPw = sqlSession.selectOne("com.boot.dao.UserDAO.loginYn", param);
+	    if (dbPw == null || !passwordEncoder.matches(inputPw, dbPw)) {
+	        return 0; // 비밀번호 틀림
+	    }
+
+	    // 2) 게시글 작성자 익명화
+	    sqlSession.update("com.boot.dao.UserDAO.anonymizePostWriterByUserId", param);
+
+	    // 3) 게시글 댓글 작성자 익명화
+	    sqlSession.update("com.boot.dao.UserDAO.anonymizePostCommentWriterByUserId", param);
+
+	    // 4) 공지사항 댓글 작성자 익명화
+	    sqlSession.update("com.boot.dao.UserDAO.anonymizeNoticeCommentWriterByUserId", param);
+
+	    // 5) 회원 삭제
+	    return sqlSession.delete("com.boot.dao.UserDAO.withdraw", param);
+	}
+
+	@Override
+	@Transactional
+	public int withdrawSocial(Map<String, Object> param) {
+
+	    // 소셜 회원도 게시글/댓글 익명화는 동일하게 적용
+	    sqlSession.update("com.boot.dao.UserDAO.anonymizePostWriterByUserId", param);
+	    sqlSession.update("com.boot.dao.UserDAO.anonymizePostCommentWriterByUserId", param);
+	    sqlSession.update("com.boot.dao.UserDAO.anonymizeNoticeCommentWriterByUserId", param);
+
+	    // 회원 삭제
+	    return sqlSession.delete("com.boot.dao.UserDAO.withdraw", param);
+	}
+
+	// 아이디 중복 체크
+	@Override
+	public int checkId(String id) {
+		return sqlSession.selectOne("com.boot.dao.UserDAO.checkId", id);
+	}
+
+	// 아이디로 회원 조회
+	@Override
+	public UserDTO getUserById(String user_id) {
+		return sqlSession.selectOne("com.boot.dao.UserDAO.getUserById", user_id);
+	}
+
+	// 로그인 시도 횟수 체크
+	@Override
+	public void updateLoginFail(String user_id) {
+		sqlSession.update("com.boot.dao.UserDAO.updateLoginFail", user_id);
+	}
+
+	// 로그인 시도횟수 초기화
+	@Override
+	public void resetLoginFail(String user_id) {
+		sqlSession.update("com.boot.dao.UserDAO.resetLoginFail", user_id);
+	}
+
+	// 이메일로 회원 조회
+	@Override
+	public UserDTO getUserByEmail(String email) {
+		return sqlSession.selectOne("com.boot.dao.UserDAO.getUserByEmail", email);
+	}
+
+	// 소셜 로그인 회원 등록
+	@Override
+	public void insertSocialUser(Map<String, String> param) {
+		sqlSession.insert("com.boot.dao.UserDAO.insertSocialUser", param);
+	}
+
+	// 이메일로 아이디 찾기
+	@Override
+	public String findIdByEmail(String email) {
+		return sqlSession.selectOne("com.boot.dao.UserDAO.findIdByEmail", email);
+	}
+
+	// 아이디, 이메일로 비밀번호 찾기
+	@Override
+	public String findPwByIdEmail(Map<String, String> param) {
+		return sqlSession.selectOne("com.boot.dao.UserDAO.findPwByIdEmail", param);
+	}
+
+	// 비밀번호 재설정 토큰 저장
+	@Override
+	public int saveResetToken(Map<String, String> param) {
+		return sqlSession.update("com.boot.dao.UserDAO.saveResetToken", param);
+	}
+
+	// 토큰으로 사용자 조회
+	@Override
+	public UserDTO findUserByResetToken(String token) {
+		return sqlSession.selectOne("com.boot.dao.UserDAO.findUserByResetToken", token);
+	}
+
+	// 토큰으로 비밀번호 업데이트
+	@Override
+	public int updatePasswordByToken(Map<String, String> param) {
+		return sqlSession.update("com.boot.dao.UserDAO.updatePasswordByToken", param);
+	}
+	
+	// userId로 닉네임을 가져오는 메서드
+    public String getNicknameByUserId(String userId) {
+        return userDAO.findNicknameByUserId(userId);  // UserDAO를 통해 닉네임 조회
+    }
+
+	@Autowired
+    private FavoriteStationDAO favoriteStationDAO;
+
+    @Override
+    public List<FavoriteStationDTO> getFavoriteList(String user_id) {
+        return favoriteStationDAO.getFavoriteList(user_id);
+    }
+
+    @Override
+    public int deleteFavoriteById(Long favoriteId) {
+        return favoriteStationDAO.deleteFavoriteById(favoriteId);
+    }
+}
