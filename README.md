@@ -156,7 +156,9 @@
 <img width="2559" height="1361" alt="image" src="https://github.com/user-attachments/assets/047a355c-28aa-4c86-9a22-3ee83361c5f8" />
 
 -카카오지도 API 연동(내 위치 조회/위치 검색)
+
 -측정소 및 측정소 조회 프론트엔드 구현(각 대기질 색깔 등급 표시)
+
 -하트 클릭 시 관심지역 등록 후 색깔 변경(채워진 하트) 토글 처리
 
 </details>
@@ -171,9 +173,11 @@ https://github.com/user-attachments/assets/8ac058c7-2ba8-49d6-94e9-3689892e8c3f
 <details>
 <summary><strong>1:1 문의</strong></summary>
 -사용자
+  
 https://github.com/user-attachments/assets/6c3b0f67-2b01-4b13-9b84-2d969a77da55
 
 -관리자
+
 https://github.com/user-attachments/assets/8c315d0f-8d90-47b5-b558-8036e1424876
 
 </details>
